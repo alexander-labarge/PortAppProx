@@ -1,0 +1,449 @@
+#!/bin/bash
+
+set -Eeuo pipefail
+shopt -s inherit_errexit
+
+# Default Variables
+TUNNEL_NAME=""
+FQ_DNS_RECORD=""
+SUBDOMAIN=""
+IP_ADDRESS=""
+PORT=""
+UNNATTENDED=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+    --name)
+        TUNNEL_NAME="$2"
+        shift 2
+        ;;
+    --fqdn)
+        FQ_DNS_RECORD="$2"
+        shift 2
+        ;;
+    --hostname)
+        SUBDOMAIN="$2"
+        shift 2
+        ;;
+    --exposed-ip)
+        IP_ADDRESS="$2"
+        shift 2
+        ;;
+    --exposed-port)
+        PORT="$2"
+        shift 2
+        ;;
+    --unattended)
+        UNNATTENDED=$2
+        shift 2
+        ;;
+    *)
+        echo "Unknown argument: $1"
+        exit 1
+        ;;
+    esac
+done
+
+# Color Constants
+RESET='\033[0m'
+FG_GREEN='\033[32m'
+FG_YELLOW='\033[33m'
+FG_RED='\033[31m'
+FG_BLUE='\033[34m'
+FG_CYAN='\033[36m'
+FG_MAGENTA='\033[35m'
+BOLD='\033[1m'
+UNDERLINE='\033[4m'
+
+# Ensure all required arguments are provided
+if [[ -z "$TUNNEL_NAME" || -z "$FQ_DNS_RECORD" || -z "$SUBDOMAIN" || -z "$IP_ADDRESS" || -z "$PORT" ]]; then
+    echo -e "${RESET}################################################################################\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}################################################################\033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}###################                          ###################\033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}##################     ${FG_RED}${BOLD} PortAppProx v1.0${RESET}${FG_BLUE}      ##################\033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}###################                          ###################\033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}################################################################\033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_YELLOW}${BOLD} Auto Service/Application Port Exposure System Service Generator \033[0m${RESET}#######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}################################################################\033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_MAGENTA}${BOLD} Purpose: ${FG_YELLOW}Completely automate the creation and management of a  \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_MAGENTA} ${FG_YELLOW}${BOLD}Cloudflare tunnel with DNS mapping in less than 30 seconds.    \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_MAGENTA} ${FG_YELLOW}${BOLD}Deploy an app or 100's securely with minimal effort.           \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_MAGENTA}${BOLD} Overview:                                                      \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE} 1. Parses command-line arguments to get the tunnel name, fully \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}    qualified domain name (FQDN), subdomain, IP address, port,  \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}    and an optional unattended flag.                            \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE} 2. Ensures that all required arguments are provided and checks \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}    if ${FG_YELLOW}required tools (cloudflared, curl, python3)${RESET}${FG_BLUE} are installed.\033[0m${RESET}#######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}    ${FG_YELLOW}(auto installs if missing)${RESET}${FG_BLUE}                                  \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE} 3. Creates a Cloudflare tunnel using the provided tunnel name  \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}    and configures it to route traffic from the specified       \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}    subdomain to the given IP address and port.                 \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE} 4. Sets up DNS records to map the subdomain to the Cloudflare  \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}    tunnel.                                                     \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE} 5. Creates a systemd service to manage the Cloudflare tunnel,  \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}    ensuring it starts on boot and can be easily managed.       \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE} 6. Provides an option to start a temporary Python HTTP server  \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}####### ${FG_BLUE}    for testing purposes.                                       \033[0m${RESET} #######\033[0m"
+
+    echo -e "${RESET}################################################################################\033[0m"
+    echo -e "${RESET}####### ┌───────────────────────────────────────────────────────────────┐#######\033[0m"
+    echo -e "${RESET}####### │ \033[1;92mUSAGE:                                                       \033[0m${RESET} │#######\033[0m"
+    echo -e "${RESET}####### │ \033[1;97m./PortAppProx --name <tunnel-name> --fqdn <fqdn> \033[0m${RESET}             │#######\033[0m"
+    echo -e "${RESET}####### │ --hostname <hostname> --exposed-ip <ip> --exposed-port <port>\033[0m${RESET} │#######\033[0m"
+    echo -e "${RESET}####### │ [--unattended true]                                          \033[0m${RESET} │#######\033[0m"
+    echo -e "${RESET}####### └───────────────────────────────────────────────────────────────┘#######\033[0m"
+    echo -e "${RESET}####### \033[1;92m  Optional Arguments:                                           \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}#######   --unattended true   Skip the prompt to keep the Python HTTP    #######\033[0m"
+    echo -e "${RESET}#######                       server running in the background.          #######\033[0m"
+    echo -e "${RESET}################################################################################\033[0m"
+
+    echo -e "${RESET}####### ┌───────────────────────────────────────────────────────────────┐#######\033[0m"
+    echo -e "${RESET}####### │ \033[1;92mExample to Expose Gitlab on port 8080:                  \033[0m${RESET}      │#######\033[0m"
+    echo -e "${RESET}####### │ \033[1;93m./PortAppProx --name gitlab                      \033[0m${RESET}             │#######\033[0m"
+    echo -e "${RESET}####### │ --fqdn gitlab.example.org --hostname gitlab                  \033[0m${RESET} │#######\033[0m"
+    echo -e "${RESET}####### │ --exposed-ip 127.0.0.1 --exposed-port 8080                   \033[0m${RESET} │#######\033[0m"
+    echo -e "${RESET}####### │ --unattended true                                            \033[0m${RESET} │#######\033[0m"
+    echo -e "${RESET}####### └───────────────────────────────────────────────────────────────┘#######\033[0m"
+    echo -e "${RESET}################################################################################\033[0m"
+
+    echo -e "${RESET}####### \033[1;96mThese settings would initialize:                                \033[0m${RESET} #######\033[0m"
+    echo -e "${RESET}################################################################################\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Tunnel Name ${RESET}                   : gitlab                          #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Tunnel ID${RESET}                      : 4acfe8b0-048f-43b3-81aa-c9e3114 #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Fully Qualified Domain Name${RESET}    : gitlab.example.org              #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Access Link${RESET}                    : https://gitlab.example.org      #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Systemd Service File${RESET}           : /etc/systemd/system/cloudflared #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Systemd Service Status${RESET}         : active                          #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}IPv4 Routing Info${RESET}              : 192.168.50.61 as source for IPv4#######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}IPv6 Routing Info${RESET}              : fd6d:5ffe:b8b6:f43:a582:bc3f:a7 #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Tunnel Config YAML${RESET}             : /home/skywalker/.cloudflared/te #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Tunnel Credentials JSON${RESET}        : /home/skywalker/.cloudflared/te #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Cloudflare Certificate${RESET}         : /home/skywalker/.cloudflared/ce #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}Exposed Usable Port${RESET}            : 8080                            #######\033[0m"
+    echo -e "${RESET}####### ${FG_CYAN}The Port Serves${RESET}                : https://gitlab.example.org      #######\033[0m"
+    echo -e "${RESET}################################################################################\033[0m"
+    echo -e "\033[0m"
+
+    exit 1
+fi
+
+CURRENT_USER=$(whoami)
+HOME_DIR=$(eval echo "~$CURRENT_USER")
+WORKING_DIR="$HOME_DIR/$TUNNEL_NAME"
+CLOUDFLARED_DIR="$HOME_DIR/.cloudflared"
+TUNNEL_CONFIG_FILE="$CLOUDFLARED_DIR/${TUNNEL_NAME}.yml"
+TUNNEL_CRED_FILE="$CLOUDFLARED_DIR/${TUNNEL_NAME}.json"
+SYSTEMD_SERVICE_FILE="/etc/systemd/system/cloudflared-${TUNNEL_NAME}.service"
+LOG_FILE="$WORKING_DIR/${TUNNEL_NAME}_$(date +'%Y%m%d_%H%M%S').creation.log"
+
+# Utility Functions
+timestamp() {
+    date +"%Y-%m-%d %H:%M:%S"
+}
+
+log() {
+    local type=$1 message=$2 color_type color_time="${FG_GREEN}" color_message="${FG_YELLOW}" time_stamp
+    time_stamp=$(timestamp)
+
+    case $type in
+    "INFO") color_type="${FG_BLUE}" ;;
+    "WARN") color_type="${FG_YELLOW}" ;;
+    "ERROR") color_type="${FG_MAGENTA}" ;;
+    "SUCCESS") color_type="${FG_CYAN}" ;;
+    *) color_type="${FG_WHITE}" ;;
+    esac
+
+    printf "${UNDERLINE}${color_time}%-20s${RESET} | ${BOLD}${color_type}%-7s${RESET} | ${color_message}%s${RESET}\n" "$time_stamp" "[$type]" "$message" | tee -a "$LOG_FILE"
+}
+
+print_separator() {
+    printf "${FG_CYAN}${BOLD}%-20s + %-7s + %s${RESET}\n" "--------------------" "-------" "--------------------------------------------------" | tee -a "$LOG_FILE"
+}
+
+cleanup() {
+    log "INFO" "Performing cleanup..."
+    if pgrep -f "python3 -m http.server" >/dev/null; then
+        pkill -f "python3 -m http.server" && log "INFO" "Python HTTP server terminated." || log "WARN" "Failed to terminate Python HTTP server."
+    else
+        log "INFO" "No Python HTTP server running."
+    fi
+    log "INFO" "Cleanup complete."
+}
+
+ensure_working_directory() {
+    sudo rm -rf "$WORKING_DIR"
+    sudo mkdir -p "$WORKING_DIR" && sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$WORKING_DIR"
+}
+
+check_prerequisites() {
+    log "INFO" "Checking and installing prerequisites..."
+    for cmd in curl python3; do
+        if ! command -v $cmd &>/dev/null; then
+            log "INFO" "$cmd not found. Installing..."
+            sudo apt-get update
+            sudo apt-get install -y $cmd
+            log "INFO" "$cmd installed successfully."
+        else
+            log "INFO" "$cmd is already installed."
+        fi
+    done
+    log "INFO" "Prerequisites are in place."
+}
+
+install_cloudflared() {
+    if ! command -v cloudflared &>/dev/null; then
+        log "INFO" "Cloudflared not found. Installing..."
+        sudo mkdir -p --mode=0755 /usr/share/keyrings
+        curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
+        sudo apt-get update
+        sudo apt-get install -y cloudflared
+        log "INFO" "Cloudflared installed successfully."
+    else
+        log "INFO" "Cloudflared is already installed."
+    fi
+}
+
+authenticate_cloudflared() {
+    if [ ! -f "$CLOUDFLARED_DIR/cert.pem" ]; then
+        log "INFO" "Cloudflared is not authenticated. Proceeding with authentication..."
+        cloudflared tunnel login
+        log "INFO" "Authentication completed."
+    else
+        log "INFO" "Cloudflared is already authenticated."
+    fi
+}
+
+delete_existing_tunnel() {
+    log "INFO" "Deleting existing tunnels if they exist..."
+    local existing_tunnel_ids
+    existing_tunnel_ids=$(cloudflared tunnel list | grep -E "${TUNNEL_NAME}" | awk '{print $1}' || true)
+
+    if [ -z "$existing_tunnel_ids" ]; then
+        log "INFO" "No existing tunnels found with the name '${TUNNEL_NAME}'."
+        return
+    fi
+
+    log "INFO" "Found tunnels with IDs: $existing_tunnel_ids"
+    for tunnel_id in $existing_tunnel_ids; do
+        log "INFO" "Cleaning up tunnel with ID: $tunnel_id"
+        # make return true but redirect stdout and steerr to /dev/null
+        cloudflared tunnel cleanup "$tunnel_id" >>$LOG_FILE 2>&1 || true
+        log "INFO" "Deleting tunnel with ID: $tunnel_id"
+        cloudflared tunnel delete "$tunnel_id"
+        log "INFO" "Cleared pre-existing tunnel with ID: $tunnel_id"
+    done
+}
+
+create_tunnel() {
+    log "INFO" "Creating new tunnel named '$TUNNEL_NAME'..."
+    if cloudflared tunnel list | grep -qw "$TUNNEL_NAME"; then
+        log "WARN" "Tunnel with name '$TUNNEL_NAME' already exists, skipping creation."
+        TUNNEL_ID=$(cloudflared tunnel list | grep -w "$TUNNEL_NAME" | awk '{print $1}')
+    else
+        TUNNEL_ID=$(cloudflared tunnel create "$TUNNEL_NAME" | grep "Created tunnel" | awk '{print $NF}')
+        log "INFO" "Tunnel '$TUNNEL_NAME' created with ID '$TUNNEL_ID'."
+    fi
+}
+
+create_yaml_config() {
+    log "INFO" "Creating YAML configuration file for the tunnel..."
+    mkdir -p "$CLOUDFLARED_DIR"
+    cat >"$TUNNEL_CONFIG_FILE" <<EOF
+tunnel: $TUNNEL_ID
+credentials-file: $CLOUDFLARED_DIR/$TUNNEL_ID.json
+ingress:
+  - hostname: $FQ_DNS_RECORD
+    service: http://$IP_ADDRESS:$PORT
+  - service: http_status:404
+EOF
+    chmod 600 "$TUNNEL_CONFIG_FILE"
+    log "INFO" "YAML configuration file created at '$TUNNEL_CONFIG_FILE'."
+}
+
+ensure_credentials_file() {
+    if [ ! -f "$CLOUDFLARED_DIR/$TUNNEL_ID.json" ]; then
+        log "ERROR" "Tunnel credentials file '$CLOUDFLARED_DIR/$TUNNEL_ID.json' doesn't exist."
+        exit 1
+    else
+        log "INFO" "Tunnel credentials file exists: '$CLOUDFLARED_DIR/$TUNNEL_ID.json'"
+    fi
+}
+
+add_dns_route() {
+    local tunnel_name=$1 hostname=$2
+    output=$(cloudflared tunnel route dns --overwrite-dns "$tunnel_name" "$hostname" 2>&1)
+    if [[ $? -ne 0 ]]; then
+        log "WARN" "Failed to add route: $hostname - exiting. Check logs. Output: $output"
+        exit 1
+    fi
+    # Extract everything to the right of "INF"
+    filtered_output=$(echo "$output" | sed -n 's/.*INF //p')
+    log "INFO" "Added DNS route: $hostname"
+    log "INFO" "$filtered_output"
+}
+
+map_dns_routes() {
+    log "INFO" "Mapping DNS routes..."
+    add_dns_route "$TUNNEL_NAME" "$SUBDOMAIN"
+    log "INFO" "DNS routes mapped successfully."
+}
+
+create_systemd_service() {
+    log "INFO" "Creating systemd service file for the tunnel..."
+    sudo bash -c "cat > $SYSTEMD_SERVICE_FILE" <<EOF
+[Unit]
+Description=Cloudflare Tunnel Service for $TUNNEL_NAME
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cloudflared tunnel --config $TUNNEL_CONFIG_FILE run $TUNNEL_ID
+Restart=always
+User=$CURRENT_USER
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable "cloudflared-${TUNNEL_NAME}.service" >>"$LOG_FILE" 2>&1 || true
+    log "INFO" "Systemd service file created and enabled."
+}
+
+start_tunnel_service() {
+    log "INFO" "Starting the tunnel service..."
+    sudo systemctl start "cloudflared-${TUNNEL_NAME}.service"
+    sleep 5 # Give some time for the service to start
+    if sudo systemctl is-active --quiet "cloudflared-${TUNNEL_NAME}.service"; then
+        log "INFO" "Tunnel service 'cloudflared-${TUNNEL_NAME}.service' started successfully."
+    else
+        log "ERROR" "Failed to start the tunnel service."
+        exit 1
+    fi
+}
+
+start_python_http_server() {
+    cd "$WORKING_DIR"
+    log "INFO" "Starting temporary Python HTTP server on port $PORT..."
+    nohup python3 -m http.server "$PORT" --bind "$IP_ADDRESS" >"$WORKING_DIR/http_server.log" 2>&1 &
+    log "INFO" "Python HTTP server started."
+}
+
+verify_tunnel_with_curl() {
+    log "INFO" "Using curl to verify the tunnel at 'https://$FQ_DNS_RECORD'..."
+
+    # Fetch the HTTP response headers and body
+    curl_output=$(curl -s -w "\nHTTP_STATUS:%{http_code}" "https://$FQ_DNS_RECORD")
+
+    # Extract the HTTP status code
+    http_status=$(echo "$curl_output" | grep "HTTP_STATUS" | awk -F: '{print $2}')
+
+    # Separate the body from the status code
+    response_body=$(echo "$curl_output" | sed -n '1,/^HTTP_STATUS:/p' | sed '$d')
+
+    # Log the response body
+    echo "$response_body" >>"$LOG_FILE"
+
+    # Check if the HTTP request was successful
+    if [ "$http_status" -ne 200 ]; then
+        log "ERROR" "Failed to fetch the URL. HTTP Status: $http_status"
+        exit 1
+    fi
+
+    # Verify if the log file is listed on the server
+    if echo "$response_body" | grep -q -F "$(basename "$LOG_FILE")"; then
+        log "SUCCESS" "Log file '$(basename "$LOG_FILE")' found on the server. Verification successful."
+        print_success_message
+    else
+        log "ERROR" "Log file '$(basename "$LOG_FILE")' not found on the server. Verification failed."
+        exit 1
+    fi
+}
+
+print_success_message() {
+    local systemd_check_active=$(systemctl show --property=ActiveState "cloudflared-${TUNNEL_NAME}.service")
+    # Extract the routing information past the timestamp
+    local systemd_check_ipv4_route_default=$(sudo systemctl status cloudflared-${TUNNEL_NAME}.service | grep -i proxy | grep -i ipv4 | sed 's/^.*proxy will use //')
+    local systemd_check_ipv6_route_default=$(sudo systemctl status cloudflared-${TUNNEL_NAME}.service | grep -i proxy | grep -i ipv6 | sed 's/^.*proxy will use //')
+    print_separator
+    echo -e "${FG_BLUE}${BOLD} Tunnel Setup Successful! ${RESET}"
+    print_separator
+    echo -e "${FG_GREEN}${BOLD}Systemd Service Info:${RESET}"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "Systemd Service File" "$SYSTEMD_SERVICE_FILE"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "Systemd Service Status" "${systemd_check_active#*=}"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "IPv4 Routing Info" "${systemd_check_ipv4_route_default}"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "IPv6 Routing Info" "${systemd_check_ipv6_route_default}"
+    print_separator
+    echo -e "${FG_GREEN}${BOLD}Tunnel Info:${RESET}"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "Tunnel FQDN" "$FQ_DNS_RECORD"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "Tunnel Name" "$TUNNEL_NAME"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "Tunnel ID" "$TUNNEL_ID"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "Tunnel Config YAML" "$TUNNEL_CONFIG_FILE"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "Tunnel Credentials JSON" "$TUNNEL_CRED_FILE"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "Cloudflare Certificate" "$CLOUDFLARED_DIR/cert.pem"
+    print_separator
+    echo -e "${FG_GREEN}${BOLD}Connection Info:${RESET}"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "Exposed Usable Port" "$PORT"
+    printf "${FG_CYAN}${BOLD}%-30s : ${FG_YELLOW}%s${RESET}\n" "The Port Serves" "https://$FQ_DNS_RECORD"
+    print_separator
+}
+
+delete_existing_service() {
+    if [ -f "$SYSTEMD_SERVICE_FILE" ]; then
+        log "WARN" "Service file '$SYSTEMD_SERVICE_FILE' already exists."
+        if sudo systemctl is-active --quiet "cloudflared-${TUNNEL_NAME}.service"; then
+            log "INFO" "Stopping existing service 'cloudflared-${TUNNEL_NAME}.service'..."
+            sudo systemctl stop "cloudflared-${TUNNEL_NAME}.service"
+            log "INFO" "Service stopped."
+        fi
+        log "INFO" "Disabling and removing existing service..."
+        sudo systemctl disable "cloudflared-${TUNNEL_NAME}.service" >>"$LOG_FILE" 2>&1 || true
+        sudo rm -f "$SYSTEMD_SERVICE_FILE"
+        log "INFO" "Service removed."
+    else
+        log "INFO" "No existing service file found."
+    fi
+}
+
+prompt_keep_server_running() {
+    if [ "$UNNATTENDED" = true ]; then
+        log "INFO" "User chose to skip prompt to keep the Python HTTP server running in the background."
+        return
+    fi
+    while true; do
+        read -p $'\e[1m\e[36mDo you want to keep the Python HTTP server running in the background? (yes/no):\e[0m ' choice
+        case "$choice" in
+        yes | y | Y | Yes | YES)
+            log "INFO" "Keeping the Python HTTP server running in the background."
+            break
+            ;;
+        no | n | N | No | NO)
+            cleanup
+            break
+            ;;
+        *)
+            echo -e "${FG_YELLOW}Please answer yes or no.${RESET}"
+            ;;
+        esac
+    done
+}
+
+# Main Execution
+print_separator
+log "INFO" "Starting tunnel creation script..."
+ensure_working_directory
+check_prerequisites
+install_cloudflared
+authenticate_cloudflared
+delete_existing_tunnel
+delete_existing_service
+create_tunnel
+ensure_credentials_file
+create_yaml_config
+map_dns_routes
+create_systemd_service
+start_tunnel_service
+start_python_http_server
+verify_tunnel_with_curl
+prompt_keep_server_running
