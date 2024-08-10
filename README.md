@@ -12,6 +12,13 @@
 - **Python HTTP Server**: Provides an option to start a temporary Python HTTP server for testing purposes.
 - **Unattended Mode**: Can run in unattended mode, skipping prompts and user interactions.
 
+![image](https://github.com/user-attachments/assets/cf386a9e-2d65-432e-b2f8-819c15b3d2f8)
+
+![image](https://github.com/user-attachments/assets/a782de2f-7f05-45ad-9c8f-50da02392600)
+
+![image](https://github.com/user-attachments/assets/52bd47d1-7894-48d2-9794-e3810d80d722)
+
+![image](https://github.com/user-attachments/assets/305b9cbb-a95a-45b3-a377-f67449598bc7)
 
 ## Prerequisites (will be autoinstalled)
 
